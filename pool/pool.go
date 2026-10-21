@@ -9,6 +9,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+var ErrInvalidWorkers = errors.New("pool: workers must be a positive number")
+
 // Func processes one job. It must return promptly when ctx is cancelled.
 type Func[J, R any] func(ctx context.Context, job J) (R, error)
 
@@ -21,7 +23,7 @@ type Func[J, R any] func(ctx context.Context, job J) (R, error)
 // ctx.Err(). Run returns only after every goroutine it started has exited.
 func Run[J, R any](ctx context.Context, workers int, jobs []J, do Func[J, R], emit func(R) error) error {
 	if workers < 1 {
-		return errors.New("pool: workers must be at least 1")
+		return ErrInvalidWorkers
 	}
 
 	eg, ctx := errgroup.WithContext(ctx)

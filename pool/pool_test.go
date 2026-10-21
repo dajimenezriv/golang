@@ -174,7 +174,7 @@ func TestRunEmptyJobs(t *testing.T) {
 func TestRunRejectsZeroWorkers(t *testing.T) {
 	err := Run(t.Context(), 0, jobs(1), func(context.Context, int) (int, error) { return 0, nil }, func(int) error { return nil })
 
-	if err == nil {
-		t.Error("Run() with 0 workers = nil, want an error")
+	if !errors.Is(err, ErrInvalidWorkers) {
+		t.Errorf("Run() = %v, want %v", err, ErrInvalidWorkers)
 	}
 }
