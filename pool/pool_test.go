@@ -103,7 +103,7 @@ func TestRunStopsWhenEmitFails(t *testing.T) {
 		}, func(j int) error {
 			if j == 12 {
 				// We wait a millisecond so the worker that sent job 12 can unblock from the
-				// out channel and grab the job 15, otherwise is a race condition with the
+				// out channel and grab the job 19, otherwise is a race condition with the
 				// cancelled context.
 				time.Sleep(time.Millisecond)
 				return errBoom
