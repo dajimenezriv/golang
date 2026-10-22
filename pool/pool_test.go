@@ -2,7 +2,6 @@ package pool
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -10,171 +9,99 @@ import (
 	"time"
 )
 
-var errBoom = errors.New("boom")
+func vals(n int) []int {
+	var vs []int
+	for i := range n {
+		vs = append(vs, i)
+	}
+	return vs
+}
 
-func work(t *testing.T, ctx context.Context, n int, doFunc func(int) (int, error), emitFunc func(int) error) (error, int64, int, time.Duration) {
+type poolResult struct {
+	errs            int
+	done, cancelled int64
+	elapsed         time.Duration
+}
+
+func runPool(t *testing.T, jobs int, timeout time.Duration, fail int) ([]int, poolResult) {
 	t.Helper()
 
-	var calls atomic.Int64
-	var emitted int
+	in := make(chan int, jobs)
+	for i := range jobs {
+		in <- i
+	}
+	close(in)
 
+	ctx, cancel := context.WithTimeout(t.Context(), timeout)
+	defer cancel()
+
+	var done, cancelled atomic.Int64
 	start := time.Now()
-	err := Run(ctx, 5, jobs(n), func(ctx context.Context, j int) (int, error) {
-		calls.Add(1)
+	out := Pool(ctx, 5, in, func(ctx context.Context, j int) (int, error) {
 		select {
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(time.Second):
 		case <-ctx.Done():
+			cancelled.Add(1)
 			return 0, ctx.Err()
 		}
-		if doFunc != nil {
-			return doFunc(j)
+		if j == fail {
+			return 0, errBoom
 		}
+		done.Add(1)
 		return j, nil
-	}, func(r int) error {
-		emitted++
-		return emitFunc(r)
 	})
 
-	return err, calls.Load(), emitted, time.Since(start)
-}
-
-func jobs(n int) []int {
-	js := make([]int, n)
-	for i := range js {
-		js[i] = i
+	var vals []int
+	var errs int
+	for r := range out {
+		if r.Err != nil {
+			errs++
+		} else {
+			vals = append(vals, r.Val)
+		}
 	}
-	return js
+
+	return vals, poolResult{errs, done.Load(), cancelled.Load(), time.Since(start)}
 }
 
-func TestRunSuccess(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var got []int
+func TestPoolInvalidWorkers(t *testing.T) {
+	defer func() {
+		if r := recover(); r != ErrInvalidWorkers {
+			t.Errorf("recover() = %v, want %v", r, ErrInvalidWorkers)
+		}
+	}()
 
-		err, _, _, elapsed := work(t, t.Context(), 100, nil, func(r int) error {
-			got = append(got, r)
-			return nil
+	Pool(t.Context(), 0, nil, func(context.Context, int) (int, error) { return 0, nil })
+}
+
+func TestPoolProcessAllJobs(t *testing.T) {
+	tests := []struct {
+		name     string
+		jobs     int
+		timeout  time.Duration
+		fail     int
+		wantVals []int
+		want     poolResult
+	}{
+		{"process all jobs", 100, 30 * time.Second, -1, vals(100), poolResult{0, 100, 0, 20 * time.Second}},
+		{"context canceled", 100, 4500 * time.Millisecond, -1, vals(20), poolResult{0, 20, 5, 4500 * time.Millisecond}},
+		{"jobs with errors", 100, 30 * time.Second, 40, vals(99), poolResult{1, 99, 0, 20 * time.Second}},
+		{"no jobs", 0, time.Second, -1, vals(0), poolResult{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				vals, got := runPool(t, tt.jobs, tt.timeout, tt.fail)
+
+				slices.Sort(vals)
+				if !slices.Equal(vals, tt.wantVals) {
+					t.Errorf("vals:\n got  %v\n want %v", vals, tt.wantVals)
+				}
+				if got != tt.want {
+					t.Errorf("results:\n got =  %v, want %v", got, tt.want)
+				}
+			})
 		})
-
-		if err != nil {
-			t.Errorf("Run() = %v, want nil", err)
-		}
-		slices.Sort(got)
-		if !slices.Equal(got, jobs(100)) {
-			t.Errorf("Run().results = %v, want 0..99", got)
-		}
-		if elapsed != 2*time.Second {
-			t.Errorf("elapsed = %v, want 2s", elapsed)
-		}
-	})
-}
-
-func TestRunStopsOnFirstError(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		err, calls, emitted, elapsed := work(t, t.Context(), 100, func(j int) (int, error) {
-			if j == 42 {
-				time.Sleep(5 * time.Millisecond)
-				return 0, errBoom
-			}
-			return j, nil
-		}, func(int) error { return nil })
-
-		if !errors.Is(err, errBoom) {
-			t.Errorf("Run() = %v, want %v", err, errBoom)
-		}
-		if calls != 49 {
-			t.Errorf("calls = %d, want 49", calls)
-		}
-		if emitted != 44 {
-			t.Errorf("emitted = %d, want 44", emitted)
-		}
-		if elapsed != 905*time.Millisecond {
-			t.Errorf("elapsed = %v, want 905ms", elapsed)
-		}
-	})
-}
-
-func TestRunStopsWhenEmitFails(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		err, calls, emitted, elapsed := work(t, t.Context(), 100, func(j int) (int, error) {
-			if j == 12 {
-				time.Sleep(5 * time.Millisecond)
-			}
-			return j, nil
-		}, func(j int) error {
-			if j == 12 {
-				// We wait a millisecond so the worker that sent job 12 can unblock from the
-				// out channel and grab the job 19, otherwise is a race condition with the
-				// cancelled context.
-				time.Sleep(time.Millisecond)
-				return errBoom
-			}
-			return nil
-		})
-
-		if !errors.Is(err, errBoom) {
-			t.Errorf("Run() = %v, want %v", err, errBoom)
-		}
-		if calls != 20 {
-			t.Errorf("calls = %d, want 20", calls)
-		}
-		if emitted != 15 {
-			t.Errorf("emitted = %d, want 15", emitted)
-		}
-		if elapsed != 306*time.Millisecond {
-			t.Errorf("elapsed = %v, want 306ms", elapsed)
-		}
-	})
-}
-
-func TestRunStopsWhenCallerCancels(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
-		defer cancel()
-
-		err, calls, emitted, elapsed := work(t, ctx, 100, nil, func(int) error {
-			return nil
-		})
-
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("Run() = %v, want %v", err, context.DeadlineExceeded)
-		}
-		if calls != 15 {
-			t.Errorf("calls = %d, want 15", calls)
-		}
-		if emitted != 10 {
-			t.Errorf("emitted = %d, want 10", emitted)
-		}
-		if elapsed != 250*time.Millisecond {
-			t.Errorf("elapsed = %v, want 250ms", elapsed)
-		}
-	})
-}
-
-func TestRunEmptyJobs(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		err, calls, emitted, elapsed := work(t, t.Context(), 0, nil, func(int) error {
-			return nil
-		})
-
-		if err != nil {
-			t.Errorf("Run() = %v, want nil", err)
-		}
-		if calls != 0 {
-			t.Errorf("calls = %d, want 0", calls)
-		}
-		if emitted != 0 {
-			t.Errorf("emitted = %d, want 0", emitted)
-		}
-		if elapsed != 0 {
-			t.Errorf("elapsed = %v, want 0", elapsed)
-		}
-	})
-}
-
-func TestRunRejectsZeroWorkers(t *testing.T) {
-	err := Run(t.Context(), 0, jobs(1), func(context.Context, int) (int, error) { return 0, nil }, func(int) error { return nil })
-
-	if !errors.Is(err, ErrInvalidWorkers) {
-		t.Errorf("Run() = %v, want %v", err, ErrInvalidWorkers)
 	}
 }
