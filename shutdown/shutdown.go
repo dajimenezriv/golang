@@ -28,7 +28,7 @@ func main() {
 		return Message{int(i.Add(1))}, nil
 	}, func(ctx context.Context, m Message) error {
 		select {
-		case <-time.After(time.Duration(i.Load()) * time.Second):
+		case <-time.After(time.Duration(m.ID) * time.Second):
 		case <-ctx.Done():
 			return ctx.Err()
 		}
