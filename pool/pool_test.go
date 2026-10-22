@@ -2,6 +2,8 @@ package pool
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -9,21 +11,36 @@ import (
 	"time"
 )
 
-func vals(n int) []int {
-	var vs []int
-	for i := range n {
-		vs = append(vs, i)
+func TestPoolInvalidWorkers(t *testing.T) {
+	for _, workers := range []int{-1, 0} {
+		t.Run(fmt.Sprint(workers), func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != ErrInvalidWorkers {
+					t.Errorf("recover() = %v, want %v", r, ErrInvalidWorkers)
+				}
+			}()
+
+			Pool(t.Context(), workers, nil, func(context.Context, int) (int, error) {
+				return 0, nil
+			})
+		})
 	}
-	return vs
+}
+
+func seq(n int) []int {
+	s := make([]int, n)
+	for i := range s {
+		s[i] = i
+	}
+	return s
 }
 
 type poolResult struct {
-	errs            int
-	done, cancelled int64
-	elapsed         time.Duration
+	cancelled int64
+	elapsed   time.Duration
 }
 
-func runPool(t *testing.T, jobs int, timeout time.Duration, fail int) ([]int, poolResult) {
+func runPool(t *testing.T, jobs int, timeout time.Duration, fail int) ([]int, []error, poolResult) {
 	t.Helper()
 
 	in := make(chan int, jobs)
@@ -35,7 +52,7 @@ func runPool(t *testing.T, jobs int, timeout time.Duration, fail int) ([]int, po
 	ctx, cancel := context.WithTimeout(t.Context(), timeout)
 	defer cancel()
 
-	var done, cancelled atomic.Int64
+	var cancelled atomic.Int64
 	start := time.Now()
 	out := Pool(ctx, 5, in, func(ctx context.Context, j int) (int, error) {
 		select {
@@ -47,59 +64,80 @@ func runPool(t *testing.T, jobs int, timeout time.Duration, fail int) ([]int, po
 		if j == fail {
 			return 0, errBoom
 		}
-		done.Add(1)
 		return j, nil
 	})
 
 	var vals []int
-	var errs int
+	var errs []error
 	for r := range out {
 		if r.Err != nil {
-			errs++
+			errs = append(errs, r.Err)
 		} else {
 			vals = append(vals, r.Val)
 		}
 	}
+	slices.Sort(vals)
 
-	return vals, poolResult{errs, done.Load(), cancelled.Load(), time.Since(start)}
+	return vals, errs, poolResult{cancelled.Load(), time.Since(start)}
 }
 
-func TestPoolInvalidWorkers(t *testing.T) {
-	defer func() {
-		if r := recover(); r != ErrInvalidWorkers {
-			t.Errorf("recover() = %v, want %v", r, ErrInvalidWorkers)
-		}
-	}()
-
-	Pool(t.Context(), 0, nil, func(context.Context, int) (int, error) { return 0, nil })
-}
-
-func TestPoolProcessAllJobs(t *testing.T) {
-	tests := []struct {
-		name     string
+func TestPool(t *testing.T) {
+	tests := map[string]struct {
 		jobs     int
 		timeout  time.Duration
 		fail     int
 		wantVals []int
+		wantErrs int
 		want     poolResult
 	}{
-		{"process all jobs", 100, 30 * time.Second, -1, vals(100), poolResult{0, 100, 0, 20 * time.Second}},
-		{"context canceled", 100, 4500 * time.Millisecond, -1, vals(20), poolResult{0, 20, 5, 4500 * time.Millisecond}},
-		{"jobs with errors", 100, 30 * time.Second, 40, vals(99), poolResult{1, 99, 0, 20 * time.Second}},
-		{"no jobs", 0, time.Second, -1, vals(0), poolResult{}},
+		"process all jobs": {
+			jobs:     100,
+			timeout:  30 * time.Second,
+			fail:     -1,
+			wantVals: seq(100),
+			want:     poolResult{0, 20 * time.Second},
+		},
+		"context cancelled": {
+			jobs:     100,
+			timeout:  4500 * time.Millisecond,
+			fail:     -1,
+			wantVals: seq(20),
+			want:     poolResult{5, 4500 * time.Millisecond},
+		},
+		"jobs with errors": {
+			jobs:     100,
+			timeout:  30 * time.Second,
+			fail:     40,
+			wantVals: slices.Delete(seq(100), 40, 41),
+			wantErrs: 1,
+			want:     poolResult{0, 20 * time.Second},
+		},
+		"no jobs": {
+			jobs:     0,
+			fail:     -1,
+			wantVals: seq(0),
+		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				vals, got := runPool(t, tt.jobs, tt.timeout, tt.fail)
+				vals, errs, got := runPool(t, tt.jobs, tt.timeout, tt.fail)
 
-				slices.Sort(vals)
 				if !slices.Equal(vals, tt.wantVals) {
 					t.Errorf("vals:\n got  %v\n want %v", vals, tt.wantVals)
 				}
+				if got := len(errs); got != tt.wantErrs {
+					t.Errorf("len(errs): %d, want %d", got, tt.wantErrs)
+				}
 				if got != tt.want {
 					t.Errorf("results:\n got =  %v, want %v", got, tt.want)
+				}
+
+				for _, err := range errs {
+					if !errors.Is(err, errBoom) {
+						t.Errorf("error = %v, want %v", err, errBoom)
+					}
 				}
 			})
 		})
