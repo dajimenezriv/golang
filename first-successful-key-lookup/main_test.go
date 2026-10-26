@@ -49,18 +49,18 @@ func TestGetWithWorkersReturnFirstSuccessfulResponse(t *testing.T) {
 		got, err := runGetWithWorkers(t, t.Context(), func(address string) (string, error) {
 			time.Sleep(time.Second)
 			if address == "address18" {
-				time.Sleep(time.Millisecond)
+				time.Sleep(5 * time.Millisecond)
 				return "success", nil
 			}
 			return "", errors.New("boom")
 		}, 100)
 
 		if err != nil {
-			t.Errorf("Get() = %v, want nil", err)
+			t.Errorf("GetWithWorkers() = %v, want nil", err)
 		}
-		want := getWithWorkersResult{"success", 25, 4001 * time.Millisecond}
+		want := getWithWorkersResult{"success", 25, 4005 * time.Millisecond}
 		if got != want {
-			t.Errorf("Get():\n got  = %v\n want = %v", got, want)
+			t.Errorf("GetWithWorkers():\n got  = %+v\n want = %+v", got, want)
 		}
 		time.Sleep(time.Second)
 	})
@@ -85,10 +85,10 @@ func TestGetWithWorkersLookupError(t *testing.T) {
 				}, tt.addresses)
 
 				if !errors.Is(err, ErrLookup) {
-					t.Errorf("Get() = %v, want %v", err, ErrLookup)
+					t.Errorf("GetWithWorkers() = %v, want %v", err, ErrLookup)
 				}
 				if got != tt.want {
-					t.Errorf("Get():\n got  = %v\n want = %v", got, tt.want)
+					t.Errorf("GetWithWorkers():\n got  = %+v\n want = %+v", got, tt.want)
 				}
 			})
 		})
@@ -103,11 +103,11 @@ func TestGetWithWorkersContextCanceled(t *testing.T) {
 		got, err := runGetWithWorkers(t, ctx, func(string) (string, error) { return "success", nil }, 100)
 
 		if !errors.Is(err, context.Canceled) {
-			t.Errorf("Get() = %v, want %v", err, context.Canceled)
+			t.Errorf("GetWithWorkers() = %v, want %v", err, context.Canceled)
 		}
 		want := getWithWorkersResult{"", 0, 0}
 		if got != want {
-			t.Errorf("Get():\n got  = %v\n want = %v", got, want)
+			t.Errorf("GetWithWorkers():\n got  = %+v\n want = %+v", got, want)
 		}
 	})
 }

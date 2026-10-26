@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"sync"
 )
 
 type Getter interface {
@@ -12,6 +11,9 @@ type Getter interface {
 
 var ErrLookup = errors.New("lookup: all addresses failed")
 
+// Get calls `Getter.Get()` for each address in parallel.
+// Returns the first successful response.
+// If all requests fail, returns an error.
 func Get(ctx context.Context, getter Getter, addresses []string, key string) (string, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -22,12 +24,11 @@ func Get(ctx context.Context, getter Getter, addresses []string, key string) (st
 	}
 	results := make(chan result, len(addresses))
 
-	var wg sync.WaitGroup
 	for _, address := range addresses {
-		wg.Go(func() {
+		go func() {
 			val, err := getter.Get(ctx, address, key)
 			results <- result{val, err}
-		})
+		}()
 	}
 
 	errs := []error{ErrLookup}
@@ -45,6 +46,9 @@ func Get(ctx context.Context, getter Getter, addresses []string, key string) (st
 	return "", errors.Join(errs...)
 }
 
+// GetWithWorkers calls `Getter.Get()` for each address in parallel with 5 workers.
+// Returns the first successful response.
+// If all requests fail, returns an error.
 func GetWithWorkers(ctx context.Context, getter Getter, addresses []string, key string) (string, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
