@@ -11,11 +11,11 @@ import (
 )
 
 type mockGetter struct {
-	get func(address string) (string, error)
+	get func(ctx context.Context, address string) (string, error)
 }
 
-func (m *mockGetter) Get(_ context.Context, address, _ string) (string, error) {
-	return m.get(address)
+func (m *mockGetter) Get(ctx context.Context, address, _ string) (string, error) {
+	return m.get(ctx, address)
 }
 
 type getWithWorkersResult struct {
@@ -30,11 +30,11 @@ func runGetWithWorkers(t *testing.T, ctx context.Context, get func(address strin
 	var calls, canceled atomic.Int64
 
 	m := &mockGetter{}
-	m.get = func(address string) (string, error) {
+	m.get = func(ctx context.Context, address string) (string, error) {
 		select {
 		case <-ctx.Done():
 			canceled.Add(1)
-			return "", nil
+			return "", ctx.Err()
 		case <-time.After(time.Second):
 			calls.Add(1)
 			return get(address)
@@ -47,6 +47,7 @@ func runGetWithWorkers(t *testing.T, ctx context.Context, get func(address strin
 
 	start := time.Now()
 	val, err := GetWithWorkers(ctx, m, addresses, "key")
+	synctest.Wait()
 	return getWithWorkersResult{val, calls.Load(), canceled.Load(), time.Since(start)}, err
 }
 
@@ -63,7 +64,7 @@ func TestGetWithWorkersReturnFirstSuccessfulResponse(t *testing.T) {
 		if err != nil {
 			t.Errorf("GetWithWorkers() = %v, want nil", err)
 		}
-		want := getWithWorkersResult{"success", 20, 0, 4005 * time.Millisecond}
+		want := getWithWorkersResult{"success", 20, 5, 4005 * time.Millisecond}
 		if got != want {
 			t.Errorf("GetWithWorkers():\n got  = %+v\n want = %+v", got, want)
 		}
