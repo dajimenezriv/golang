@@ -18,7 +18,13 @@ func (m *mockGetter) Get(ctx context.Context, address, key string) (string, erro
 	return m.get(address)
 }
 
-func runGet(t *testing.T, ctx context.Context, get func(address string) (string, error), n int) (string, error, int64, time.Duration) {
+type getWithWorkersResult struct {
+	val     string
+	calls   int64
+	elapsed time.Duration
+}
+
+func runGetWithWorkers(t *testing.T, ctx context.Context, get func(address string) (string, error), n int) (getWithWorkersResult, error) {
 	t.Helper()
 
 	var calls atomic.Int64
@@ -34,13 +40,13 @@ func runGet(t *testing.T, ctx context.Context, get func(address string) (string,
 	}
 
 	start := time.Now()
-	r, err := Get(ctx, m, addresses, "key")
-	return r, err, calls.Load(), time.Since(start)
+	val, err := GetWithWorkers(ctx, m, addresses, "key")
+	return getWithWorkersResult{val, calls.Load(), time.Since(start)}, err
 }
 
-func TestGetReturnFirstSuccessfulResponse(t *testing.T) {
+func TestGetWithWorkersReturnFirstSuccessfulResponse(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		r, err, calls, elapsed := runGet(t, t.Context(), func(address string) (string, error) {
+		got, err := runGetWithWorkers(t, t.Context(), func(address string) (string, error) {
 			time.Sleep(time.Second)
 			if address == "address18" {
 				time.Sleep(time.Millisecond)
@@ -52,39 +58,28 @@ func TestGetReturnFirstSuccessfulResponse(t *testing.T) {
 		if err != nil {
 			t.Errorf("Get() = %v, want nil", err)
 		}
-		if r != "success" {
-			t.Errorf("Get() = %q, want success", r)
-		}
-		if calls != 24 {
-			t.Errorf("calls = %d, want 24", calls)
-		}
-		if elapsed != 4001*time.Millisecond {
-			t.Errorf("elapsed = %v, want 4001ms", elapsed)
+		want := getWithWorkersResult{"success", 25, 4001 * time.Millisecond}
+		if got != want {
+			t.Errorf("Get():\n got  = %v\n want = %v", got, want)
 		}
 		time.Sleep(time.Second)
 	})
 }
 
-func TestGetLookupError(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-
+func TestGetWithWorkersLookupError(t *testing.T) {
 	tests := []struct {
-		name        string
-		ctx         context.Context
-		addresses   int
-		wantCalls   int64
-		wantElapsed time.Duration
+		name      string
+		addresses int
+		want      getWithWorkersResult
 	}{
-		{"no addresses", t.Context(), 0, 0, 0},
-		{"context canceled", ctx, 100, 0, 0},
-		{"all requests fail", t.Context(), 100, 100, 20 * time.Second},
+		{"no addresses", 0, getWithWorkersResult{"", 0, 0}},
+		{"all requests fail", 100, getWithWorkersResult{"", 100, 20 * time.Second}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				r, err, calls, elapsed := runGet(t, tt.ctx, func(address string) (string, error) {
+				got, err := runGetWithWorkers(t, t.Context(), func(address string) (string, error) {
 					time.Sleep(time.Second)
 					return "", errors.New("boom")
 				}, tt.addresses)
@@ -92,16 +87,27 @@ func TestGetLookupError(t *testing.T) {
 				if !errors.Is(err, ErrLookup) {
 					t.Errorf("Get() = %v, want %v", err, ErrLookup)
 				}
-				if r != "" {
-					t.Errorf("Get() = %q, want empty", r)
-				}
-				if calls != tt.wantCalls {
-					t.Errorf("calls = %d, want %d", calls, tt.wantCalls)
-				}
-				if elapsed != tt.wantElapsed {
-					t.Errorf("elapsed = %v, want %d", elapsed, tt.wantElapsed)
+				if got != tt.want {
+					t.Errorf("Get():\n got  = %v\n want = %v", got, tt.want)
 				}
 			})
 		})
 	}
+}
+
+func TestGetWithWorkersContextCanceled(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		got, err := runGetWithWorkers(t, ctx, func(string) (string, error) { return "success", nil }, 100)
+
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Get() = %v, want %v", err, context.Canceled)
+		}
+		want := getWithWorkersResult{"", 0, 0}
+		if got != want {
+			t.Errorf("Get():\n got  = %v\n want = %v", got, want)
+		}
+	})
 }
