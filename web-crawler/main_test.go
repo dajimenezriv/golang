@@ -9,12 +9,10 @@ import (
 	"time"
 )
 
-type mockFetcher struct {
-	fetch func(context.Context, string) (string, []string, error)
-}
+type fetcherFunc func(context.Context, string) (string, []string, error)
 
-func (m *mockFetcher) Fetch(ctx context.Context, url string) (string, []string, error) {
-	return m.fetch(ctx, url)
+func (f fetcherFunc) Fetch(ctx context.Context, url string) (string, []string, error) {
+	return f(ctx, url)
 }
 
 type crawlResult struct {
@@ -26,8 +24,7 @@ func runCrawl(t *testing.T, ctx context.Context, depth int, fetch func(string) (
 
 	var calls, canceled atomic.Int64
 
-	m := &mockFetcher{}
-	m.fetch = func(ctx context.Context, url string) (string, []string, error) {
+	rs := Crawl(ctx, "root", depth, fetcherFunc(func(ctx context.Context, url string) (string, []string, error) {
 		select {
 		case <-ctx.Done():
 			canceled.Add(1)
@@ -36,9 +33,7 @@ func runCrawl(t *testing.T, ctx context.Context, depth int, fetch func(string) (
 			calls.Add(1)
 			return fetch(url)
 		}
-	}
-
-	rs := Crawl(ctx, "root", depth, m)
+	}))
 
 	var urls []string
 	var errs []error

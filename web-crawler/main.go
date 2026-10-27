@@ -25,7 +25,7 @@ func Crawl(ctx context.Context, url string, depth int, fetcher Fetcher) <-chan R
 	var (
 		wg      sync.WaitGroup
 		mu      sync.Mutex
-		seen    = make(map[string]int) // maps url and depth
+		seen    = make(map[string]int) // url -> max remaining depth it was visited with
 		results = make(chan Result)
 		sem     = make(chan struct{}, 8)
 	)
@@ -41,7 +41,8 @@ func Crawl(ctx context.Context, url string, depth int, fetcher Fetcher) <-chan R
 		if ok && d >= depth {
 			return
 		}
-		// The issue with this is that we are going to have refetches.
+		// A URL reached again with more remaining depth is fetched and
+		// reported again, so a URL may appear in more than one Result.
 		seen[url] = depth
 		wg.Go(func() {
 			select {
@@ -63,8 +64,8 @@ func Crawl(ctx context.Context, url string, depth int, fetcher Fetcher) <-chan R
 			if err != nil {
 				return
 			}
-			for _, url := range urls {
-				visit(url, depth-1)
+			for _, u := range urls {
+				visit(u, depth-1)
 			}
 		})
 	}
