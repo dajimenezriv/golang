@@ -19,10 +19,13 @@ type Result struct {
 
 // Crawl uses fetcher to recursively crawl
 // pages starting with url, to a maximum of depth.
+// The returned channel is closed when the crawl finishes.
+// Callers must drain it or cancel ctx; otherwise goroutines leak.
 func Crawl(ctx context.Context, url string, depth int, fetcher Fetcher) <-chan Result {
 	var (
-		seen    sync.Map
 		wg      sync.WaitGroup
+		mu      sync.Mutex
+		seen    = make(map[string]int) // maps url and depth
 		results = make(chan Result)
 		sem     = make(chan struct{}, 8)
 	)
@@ -32,9 +35,14 @@ func Crawl(ctx context.Context, url string, depth int, fetcher Fetcher) <-chan R
 		if depth <= 0 {
 			return
 		}
-		if _, loaded := seen.LoadOrStore(url, struct{}{}); loaded {
+		mu.Lock()
+		defer mu.Unlock()
+		d, ok := seen[url]
+		if ok && d >= depth {
 			return
 		}
+		// The issue with this is that we are going to have refetches.
+		seen[url] = depth
 		wg.Go(func() {
 			select {
 			case sem <- struct{}{}:
@@ -48,7 +56,7 @@ func Crawl(ctx context.Context, url string, depth int, fetcher Fetcher) <-chan R
 				return
 			}
 			select {
-			case results <- Result{url, body, err}:
+			case results <- Result{URL: url, Body: body, Err: err}:
 			case <-ctx.Done():
 				return
 			}

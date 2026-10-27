@@ -18,7 +18,7 @@ func (m *mockFetcher) Fetch(ctx context.Context, url string) (string, []string, 
 }
 
 type crawlResult struct {
-	calls, cancelled int64
+	calls, canceled int64
 }
 
 func runCrawl(t *testing.T, ctx context.Context, depth int, fetch func(string) (string, []string, error)) ([]string, crawlResult, []error) {
@@ -31,7 +31,7 @@ func runCrawl(t *testing.T, ctx context.Context, depth int, fetch func(string) (
 		select {
 		case <-ctx.Done():
 			canceled.Add(1)
-			return "", []string{}, ctx.Err()
+			return "", nil, ctx.Err()
 		case <-time.After(time.Second):
 			calls.Add(1)
 			return fetch(url)
@@ -39,10 +39,9 @@ func runCrawl(t *testing.T, ctx context.Context, depth int, fetch func(string) (
 	}
 
 	rs := Crawl(ctx, "root", depth, m)
-	synctest.Wait()
 
-	urls := make([]string, 0)
-	errs := make([]error, 0)
+	var urls []string
+	var errs []error
 	for r := range rs {
 		urls = append(urls, r.URL)
 		if r.Err != nil {
@@ -74,7 +73,7 @@ func TestCrawlFetchesUntilDepth(t *testing.T) {
 	})
 }
 
-func TestCrawlDoesNotRefetchesSeenURL(t *testing.T) {
+func TestCrawlDoesNotRefetchSeenURL(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		urls, got, errs := runCrawl(t, t.Context(), 3, func(url string) (string, []string, error) {
 			return "body", []string{"url"}, nil
