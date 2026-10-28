@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 )
 
@@ -34,39 +35,25 @@ func ConcurrentBFSQueries(graph map[int][]int, queries []int, numWorkers int) ma
 
 	for range numWorkers {
 		wg.Go(func() {
-			// Test2
-			var (
-				seen    map[int]struct{}
-				pending []int
-				result  []int
-			)
+			seen := make(map[int]struct{})
+			var result []int
 
 			for q := range queriesCh {
-				// Test1
-				// var (
-				// 	seen    = map[int]struct{}{q: {}}
-				// 	pending = []int{q}
-				// 	result  = []int{q}
-				// )
-				// Test2
-				seen = map[int]struct{}{q: {}}
-				pending = []int{q}
-				result = []int{q}
+				clear(seen)
+				seen[q] = struct{}{}
+				result = append(result[:0], q)
 
-				for len(pending) > 0 {
-					node := pending[0]
-					pending = pending[1:]
-					for _, neighbour := range graph[node] {
+				for head := 0; head < len(result); head++ {
+					for _, neighbour := range graph[result[head]] {
 						if _, ok := seen[neighbour]; !ok {
 							seen[neighbour] = struct{}{}
-							pending = append(pending, neighbour)
 							result = append(result, neighbour)
 						}
 					}
 				}
 
 				mu.Lock()
-				results[q] = result
+				results[q] = slices.Clone(result)
 				mu.Unlock()
 			}
 		})
