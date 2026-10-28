@@ -41,7 +41,7 @@ func (r *Rectangle) Perimeter() float64 {
 
 // String returns a string representation of the rectangle
 func (r *Rectangle) String() string {
-	return fmt.Sprintf("Rectangle(width: %f, height: %f)", r.Width, r.Height)
+	return fmt.Sprintf("Rectangle(width: %g, height: %g)", r.Width, r.Height)
 }
 
 // Circle represents a perfectly round shape
@@ -127,23 +127,22 @@ func (sc *ShapeCalculator) TotalArea(shapes []Shape) float64 {
 
 // LargestShape finds the shape with the largest area
 func (sc *ShapeCalculator) LargestShape(shapes []Shape) Shape {
-	largest := shapes[0]
-	for _, shape := range shapes {
-		if shape.Area() > largest.Area() {
-			largest = shape
-		}
+	if len(shapes) == 0 {
+		return nil
 	}
-	return largest
+	return slices.MaxFunc(shapes, func(a Shape, b Shape) int {
+		return cmp.Compare(a.Area(), b.Area())
+	})
 }
 
 // SortByArea sorts shapes by area in ascending or descending order
 func (sc *ShapeCalculator) SortByArea(shapes []Shape, ascending bool) []Shape {
-	slices.SortFunc(shapes, func(a Shape, b Shape) int {
+	s := slices.Clone(shapes)
+	slices.SortFunc(s, func(a Shape, b Shape) int {
 		if ascending {
 			return cmp.Compare(a.Area(), b.Area())
-		} else {
-			return cmp.Compare(b.Area(), a.Area())
 		}
+		return cmp.Compare(b.Area(), a.Area())
 	})
-	return shapes
+	return s
 }
