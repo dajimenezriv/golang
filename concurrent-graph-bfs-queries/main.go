@@ -21,7 +21,12 @@ func main() {
 }
 
 func ConcurrentBFSQueries(graph map[int][]int, queries []int, numWorkers int) map[int][]int {
+	if numWorkers <= 0 {
+		return map[int][]int{}
+	}
+
 	var (
+		mu        sync.Mutex
 		results   = make(map[int][]int)
 		queriesCh = make(chan int)
 		wg        sync.WaitGroup
@@ -48,7 +53,9 @@ func ConcurrentBFSQueries(graph map[int][]int, queries []int, numWorkers int) ma
 					}
 				}
 
+				mu.Lock()
 				results[q] = result
+				mu.Unlock()
 			}
 		})
 	}
