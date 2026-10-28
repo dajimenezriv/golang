@@ -17,24 +17,31 @@ type Client interface {
 	Get(ctx context.Context, address string) (string, error)
 }
 
-type Result struct {
-	Val string
-	Err error
+type result struct {
+	val string
+	err error
 }
 
 type Cache struct {
 	client Client
 
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
 	mu      sync.Mutex
 	flight  map[string]struct{}
-	entries map[string]Result
+	entries map[string]result
 }
 
 func NewCache(client Client) *Cache {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Cache{
 		client:  client,
+		ctx:     ctx,
+		cancel:  cancel,
 		flight:  make(map[string]struct{}),
-		entries: make(map[string]Result),
+		entries: make(map[string]result),
 	}
 }
 
@@ -43,20 +50,25 @@ func (c *Cache) Get(ctx context.Context, address string) (string, error) {
 	defer c.mu.Unlock()
 
 	if e, ok := c.entries[address]; ok {
-		return e.Val, e.Err
+		return e.val, e.err
 	}
 	if _, ok := c.flight[address]; !ok {
 		c.flight[address] = struct{}{}
-		go func() {
+		c.wg.Go(func() {
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			defer cancel()
 			val, err := c.client.Get(ctx, address)
 			c.mu.Lock()
-			c.entries[address] = Result{val, err}
+			c.entries[address] = result{val, err}
 			delete(c.flight, address)
 			c.mu.Unlock()
-		}()
+		})
 	}
 
 	return "", ErrNotReady
+}
+
+func (c *Cache) Close() {
+	c.cancel()
+	c.wg.Wait()
 }

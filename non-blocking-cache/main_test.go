@@ -11,18 +11,21 @@ import (
 	"go.uber.org/goleak"
 )
 
+var ErrBoom = errors.New("boom")
+
 func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
 type mockClient struct {
-	get                   func(ctx context.Context, address string) (string, error)
+	get                   func(address string) (string, error)
 	calls, done, canceled atomic.Int64
 	start                 time.Time
 }
 
 func newMockClient() *mockClient {
 	return &mockClient{
+		get:   func(address string) (string, error) { return address, nil },
 		start: time.Now(),
 	}
 }
@@ -36,7 +39,7 @@ func (m *mockClient) Get(ctx context.Context, address string) (string, error) {
 		return "", ctx.Err()
 	}
 	m.done.Add(1)
-	return address, nil
+	return m.get(address)
 }
 
 type getResults struct {
@@ -54,34 +57,23 @@ func (m *mockClient) collect() getResults {
 	}
 }
 
-func TestGet(t *testing.T) {
+func TestGetRunsJustOneFetch(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		m := newMockClient()
 		c := NewCache(m)
+		t.Cleanup(func() { c.Close() })
 
-		_, err := c.Get(t.Context(), "address")
-		if !errors.Is(err, ErrNotReady) {
-			t.Errorf("Get() = %v, want %v", err, ErrNotReady)
+		for range 100 {
+			go func() {
+				_, err := c.Get(t.Context(), "address")
+				if !errors.Is(err, ErrNotReady) {
+					t.Errorf("Get() = %v, want %v", err, ErrNotReady)
+				}
+			}()
 		}
+
+		time.Sleep(time.Second)
 		synctest.Wait()
-		want := getResults{calls: 1, done: 0, canceled: 0, elapsed: 0}
-		if got := m.collect(); got != want {
-			t.Fatalf("Get():\n got  = %+v\n want = %+v", got, want)
-		}
-
-		// Problem, if Fatalf then it says goroutines blocked because the context from the
-		// Get is outside test context
-		time.Sleep(999 * time.Millisecond)
-		_, err = c.Get(t.Context(), "address")
-		if !errors.Is(err, ErrNotReady) {
-			t.Errorf("Get() = %v, want %v", err, ErrNotReady)
-		}
-		want = getResults{calls: 1, done: 0, canceled: 0, elapsed: 999 * time.Millisecond}
-		if got := m.collect(); got != want {
-			t.Fatalf("Get():\n got  = %+v\n want = %+v", got, want)
-		}
-
-		time.Sleep(time.Millisecond)
 		v, err := c.Get(t.Context(), "address")
 		if err != nil {
 			t.Errorf("Get() = %v, want nil", err)
@@ -89,7 +81,65 @@ func TestGet(t *testing.T) {
 		if v != "address" {
 			t.Errorf("Get() = %q, want address", v)
 		}
-		want = getResults{calls: 1, done: 1, canceled: 0, elapsed: time.Second}
+		want := getResults{calls: 1, done: 1, canceled: 0, elapsed: time.Second}
+		if got := m.collect(); got != want {
+			t.Fatalf("Get():\n got  = %+v\n want = %+v", got, want)
+		}
+	})
+}
+
+func TestGetFetchIgnoresContextCanceled(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := newMockClient()
+		c := NewCache(m)
+		t.Cleanup(func() { c.Close() })
+
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		_, err := c.Get(ctx, "address")
+		if !errors.Is(err, ErrNotReady) {
+			t.Errorf("Get() = %v, want %v", err, ErrNotReady)
+		}
+
+		time.Sleep(time.Second)
+		synctest.Wait()
+		v, err := c.Get(t.Context(), "address")
+		if err != nil {
+			t.Errorf("Get() = %v, want nil", err)
+		}
+		if v != "address" {
+			t.Errorf("Get() = %q, want address", v)
+		}
+		want := getResults{calls: 1, done: 1, canceled: 0, elapsed: time.Second}
+		if got := m.collect(); got != want {
+			t.Fatalf("Get():\n got  = %+v\n want = %+v", got, want)
+		}
+	})
+}
+
+func TestGetStoresError(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := newMockClient()
+		m.get = func(address string) (string, error) { return "", ErrBoom }
+		c := NewCache(m)
+		t.Cleanup(func() { c.Close() })
+
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		_, err := c.Get(ctx, "address")
+		if !errors.Is(err, ErrNotReady) {
+			t.Errorf("Get() = %v, want %v", err, ErrNotReady)
+		}
+
+		time.Sleep(time.Second)
+		synctest.Wait()
+		_, err = c.Get(t.Context(), "address")
+		if !errors.Is(err, ErrBoom) {
+			t.Errorf("Get() = %v, want %v", err, ErrBoom)
+		}
+		want := getResults{calls: 1, done: 1, canceled: 0, elapsed: time.Second}
 		if got := m.collect(); got != want {
 			t.Fatalf("Get():\n got  = %+v\n want = %+v", got, want)
 		}
