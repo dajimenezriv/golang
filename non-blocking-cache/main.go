@@ -8,27 +8,33 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 )
 
-var ErrNotFound = errors.New("cache: not found")
+var ErrNotReady = errors.New("cache: value not ready")
 
 type Client interface {
 	Get(ctx context.Context, address string) (string, error)
 }
 
+type Result struct {
+	Val string
+	Err error
+}
+
 type Cache struct {
 	client Client
 
-	mu     sync.Mutex
-	flight map[string]struct{}
-	c      map[string]string
+	mu      sync.Mutex
+	flight  map[string]struct{}
+	entries map[string]Result
 }
 
 func NewCache(client Client) *Cache {
 	return &Cache{
-		client: client,
-		flight: make(map[string]struct{}),
-		c:      make(map[string]string),
+		client:  client,
+		flight:  make(map[string]struct{}),
+		entries: make(map[string]Result),
 	}
 }
 
@@ -36,20 +42,21 @@ func (c *Cache) Get(ctx context.Context, address string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if v, ok := c.c[address]; ok {
-		return v, nil
+	if e, ok := c.entries[address]; ok {
+		return e.Val, e.Err
 	}
 	if _, ok := c.flight[address]; !ok {
 		c.flight[address] = struct{}{}
 		go func() {
-			defer delete(c.flight, address)
-			if v, err := c.client.Get(ctx, address); err == nil {
-				c.mu.Lock()
-				c.c[address] = v
-				c.mu.Unlock()
-			}
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			val, err := c.client.Get(ctx, address)
+			c.mu.Lock()
+			c.entries[address] = Result{val, err}
+			delete(c.flight, address)
+			c.mu.Unlock()
 		}()
 	}
 
-	return "", ErrNotFound
+	return "", ErrNotReady
 }

@@ -7,62 +7,91 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"go.uber.org/goleak"
 )
 
-type clientGetter func(ctx context.Context, address string) (string, error)
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
+}
 
-func (c clientGetter) Get(ctx context.Context, address string) (string, error) {
-	return c(ctx, address)
+type mockClient struct {
+	get                   func(ctx context.Context, address string) (string, error)
+	calls, done, canceled atomic.Int64
+	start                 time.Time
+}
+
+func newMockClient() *mockClient {
+	return &mockClient{
+		start: time.Now(),
+	}
+}
+
+func (m *mockClient) Get(ctx context.Context, address string) (string, error) {
+	m.calls.Add(1)
+	select {
+	case <-time.After(time.Second):
+	case <-ctx.Done():
+		m.canceled.Add(1)
+		return "", ctx.Err()
+	}
+	m.done.Add(1)
+	return address, nil
+}
+
+type getResults struct {
+	v                     string
+	calls, done, canceled int64
+	elapsed               time.Duration
+}
+
+func (m *mockClient) collect() getResults {
+	return getResults{
+		calls:    m.calls.Load(),
+		done:     m.done.Load(),
+		canceled: m.canceled.Load(),
+		elapsed:  time.Since(m.start),
+	}
 }
 
 func TestGet(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		var calls, done, canceled atomic.Int64
-
-		start := time.Now()
-		c := NewCache(clientGetter(func(ctx context.Context, address string) (string, error) {
-			calls.Add(1)
-			select {
-			case <-time.After(time.Second):
-			case <-ctx.Done():
-				canceled.Add(1)
-				return "", ctx.Err()
-			}
-			done.Add(1)
-			return address, nil
-		}))
+		m := newMockClient()
+		c := NewCache(m)
 
 		_, err := c.Get(t.Context(), "address")
-		if !errors.Is(err, ErrNotFound) {
-			t.Errorf("Get() = %v, want %v", err, ErrNotFound)
+		if !errors.Is(err, ErrNotReady) {
+			t.Errorf("Get() = %v, want %v", err, ErrNotReady)
 		}
 		synctest.Wait()
-		if got := calls.Load(); got != 1 {
-			t.Errorf("calls = %d, want 1", got)
+		want := getResults{calls: 1, done: 0, canceled: 0, elapsed: 0}
+		if got := m.collect(); got != want {
+			t.Fatalf("Get():\n got  = %+v\n want = %+v", got, want)
 		}
 
+		// Problem, if Fatalf then it says goroutines blocked because the context from the
+		// Get is outside test context
 		time.Sleep(999 * time.Millisecond)
 		_, err = c.Get(t.Context(), "address")
-		if !errors.Is(err, ErrNotFound) {
-			t.Errorf("Get() = %v, want %v", err, ErrNotFound)
+		if !errors.Is(err, ErrNotReady) {
+			t.Errorf("Get() = %v, want %v", err, ErrNotReady)
 		}
-		if got := done.Load(); got != 0 {
-			t.Errorf("done = %d, want 0", got)
+		want = getResults{calls: 1, done: 0, canceled: 0, elapsed: 999 * time.Millisecond}
+		if got := m.collect(); got != want {
+			t.Fatalf("Get():\n got  = %+v\n want = %+v", got, want)
 		}
 
 		time.Sleep(time.Millisecond)
-		got, err := c.Get(t.Context(), "address")
+		v, err := c.Get(t.Context(), "address")
 		if err != nil {
 			t.Errorf("Get() = %v, want nil", err)
 		}
-		if got != "address" {
-			t.Errorf("Get() = %q, want address", got)
+		if v != "address" {
+			t.Errorf("Get() = %q, want address", v)
 		}
-		if got := done.Load(); got != 1 {
-			t.Errorf("done = %d, want 1", got)
-		}
-		if elapsed := time.Since(start); elapsed != time.Second {
-			t.Errorf("elapsed = %v, want 1s", got)
+		want = getResults{calls: 1, done: 1, canceled: 0, elapsed: time.Second}
+		if got := m.collect(); got != want {
+			t.Fatalf("Get():\n got  = %+v\n want = %+v", got, want)
 		}
 	})
 }
