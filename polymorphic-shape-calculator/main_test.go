@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -457,5 +459,40 @@ func TestSortingShapes(t *testing.T) {
 		for i, shape := range shapes {
 			t.Logf("Shape %d: %T, Area: %.2f", i, shape, shape.Area())
 		}
+	}
+}
+
+func TestConstructorsRejectNaNAndInf(t *testing.T) {
+	for _, v := range []float64{math.NaN(), math.Inf(1)} {
+		if _, err := NewRectangle(v, 1); !errors.Is(err, ErrInvalidDimension) {
+			t.Errorf("NewRectangle(%g, 1): want ErrInvalidDimension, got %v", v, err)
+		}
+		if _, err := NewCircle(v); !errors.Is(err, ErrInvalidDimension) {
+			t.Errorf("NewCircle(%g): want ErrInvalidDimension, got %v", v, err)
+		}
+		if _, err := NewTriangle(v, 1, 1); !errors.Is(err, ErrInvalidDimension) {
+			t.Errorf("NewTriangle(%g, 1, 1): want ErrInvalidDimension, got %v", v, err)
+		}
+	}
+}
+
+func TestLargestShapeEmpty(t *testing.T) {
+	if got := NewShapeCalculator().LargestShape(nil); got != nil {
+		t.Errorf("LargestShape(nil) = %v, want nil", got)
+	}
+}
+
+func TestSortByAreaDoesNotMutateInput(t *testing.T) {
+	rect, _ := NewRectangle(5.0, 3.0)
+	circle, _ := NewCircle(2.0)
+	triangle, _ := NewTriangle(3.0, 4.0, 5.0)
+
+	shapes := []Shape{rect, circle, triangle}
+	original := slices.Clone(shapes)
+
+	NewShapeCalculator().SortByArea(shapes, true)
+
+	if !slices.Equal(shapes, original) {
+		t.Errorf("SortByArea reordered its input: got %v, want %v", shapes, original)
 	}
 }

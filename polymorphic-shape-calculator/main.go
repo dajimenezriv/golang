@@ -8,6 +8,20 @@ import (
 	"slices"
 )
 
+// ErrInvalidDimension is returned when a shape is built with impossible dimensions
+var ErrInvalidDimension = errors.New("invalid dimension")
+
+// positiveFinite reports whether every value is > 0 and not +Inf.
+// NaN fails the > 0 comparison, so it is rejected too.
+func positiveFinite(vs ...float64) bool {
+	for _, v := range vs {
+		if !(v > 0) || math.IsInf(v, 1) {
+			return false
+		}
+	}
+	return true
+}
+
 // Shape interface defines methods that all shapes must implement
 type Shape interface {
 	Area() float64
@@ -23,8 +37,8 @@ type Rectangle struct {
 
 // NewRectangle creates a new Rectangle with validation
 func NewRectangle(width, height float64) (*Rectangle, error) {
-	if width <= 0 || height <= 0 {
-		return nil, errors.New("invalid width or height")
+	if !positiveFinite(width, height) {
+		return nil, fmt.Errorf("%w: width %g, height %g must be positive and finite", ErrInvalidDimension, width, height)
 	}
 	return &Rectangle{Width: width, Height: height}, nil
 }
@@ -51,8 +65,8 @@ type Circle struct {
 
 // NewCircle creates a new Circle with validation
 func NewCircle(radius float64) (*Circle, error) {
-	if radius <= 0 {
-		return nil, errors.New("invalid radius")
+	if !positiveFinite(radius) {
+		return nil, fmt.Errorf("%w: radius %g must be positive and finite", ErrInvalidDimension, radius)
 	}
 	return &Circle{Radius: radius}, nil
 }
@@ -69,7 +83,7 @@ func (c *Circle) Perimeter() float64 {
 
 // String returns a string representation of the circle
 func (c *Circle) String() string {
-	return fmt.Sprintf("Circle(radius: %f)", c.Radius)
+	return fmt.Sprintf("Circle(radius: %g)", c.Radius)
 }
 
 // Triangle represents a three-sided polygon
@@ -81,8 +95,11 @@ type Triangle struct {
 
 // NewTriangle creates a new Triangle with validation
 func NewTriangle(a, b, c float64) (*Triangle, error) {
-	if a <= 0 || b <= 0 || c <= 0 || a+b <= c || a+c <= b || b+c <= a {
-		return nil, errors.New("invalid a, b or c")
+	if !positiveFinite(a, b, c) {
+		return nil, fmt.Errorf("%w: sides %g, %g, %g must be positive and finite", ErrInvalidDimension, a, b, c)
+	}
+	if a+b <= c || a+c <= b || b+c <= a {
+		return nil, fmt.Errorf("%w: sides %g, %g, %g violate the triangle inequality", ErrInvalidDimension, a, b, c)
 	}
 	return &Triangle{SideA: a, SideB: b, SideC: c}, nil
 }
@@ -100,7 +117,7 @@ func (t *Triangle) Perimeter() float64 {
 
 // String returns a string representation of the triangle
 func (t *Triangle) String() string {
-	return fmt.Sprintf("Triangle(sides: %f, %f, %f)", t.SideA, t.SideB, t.SideC)
+	return fmt.Sprintf("Triangle(sides: %g, %g, %g)", t.SideA, t.SideB, t.SideC)
 }
 
 // ShapeCalculator provides utility functions for shapes
@@ -113,7 +130,7 @@ func NewShapeCalculator() *ShapeCalculator {
 
 // PrintProperties prints the properties of a shape
 func (sc *ShapeCalculator) PrintProperties(s Shape) {
-	fmt.Println(s.String())
+	fmt.Printf("%v area=%.2f perimeter=%.2f\n", s, s.Area(), s.Perimeter())
 }
 
 // TotalArea calculates the sum of areas of all shapes
