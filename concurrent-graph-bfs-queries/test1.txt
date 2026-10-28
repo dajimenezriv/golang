@@ -1,0 +1,16 @@
+goos: linux
+goarch: amd64
+pkg: golang/concurrent-graph-bfs-queries
+cpu: AMD Ryzen 7 4800H with Radeon Graphics         
+BenchmarkBFS-16    	     793	   1673976 ns/op	     14120 visited	 1543341 B/op	   14413 allocs/op
+BenchmarkBFS-16    	     867	   1550456 ns/op	     14120 visited	 1542656 B/op	   14413 allocs/op
+BenchmarkBFS-16    	     919	   1678051 ns/op	     14120 visited	 1542688 B/op	   14413 allocs/op
+BenchmarkBFS-16    	     574	   2124124 ns/op	     14120 visited	 1543865 B/op	   14413 allocs/op
+BenchmarkBFS-16    	     682	   1806573 ns/op	     14120 visited	 1542551 B/op	   14412 allocs/op
+BenchmarkBFS-16    	     769	   1736602 ns/op	     14120 visited	 1542969 B/op	   14412 allocs/op
+BenchmarkBFS-16    	     573	   2324332 ns/op	     14120 visited	 1543473 B/op	   14412 allocs/op
+BenchmarkBFS-16    	     591	   1928156 ns/op	     14120 visited	 1543459 B/op	   14412 allocs/op
+BenchmarkBFS-16    	     838	   2011847 ns/op	     14120 visited	 1542783 B/op	   14412 allocs/op
+BenchmarkBFS-16    	     606	   2349148 ns/op	     14120 visited	 1542720 B/op	   14412 allocs/op
+PASS
+ok  	golang/concurrent-graph-bfs-queries	13.604s

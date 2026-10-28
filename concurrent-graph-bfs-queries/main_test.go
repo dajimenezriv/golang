@@ -327,7 +327,7 @@ func TestCorrectnessWithComplexGraphs(t *testing.T) {
 		// Create a dense graph where every node connects to every other node
 		graph := make(map[int][]int)
 		numNodes := 10
-		for i := 0; i < numNodes; i++ {
+		for i := range numNodes {
 			connections := make([]int, 0, numNodes-1)
 			for j := 0; j < numNodes; j++ {
 				if i != j {
@@ -381,4 +381,19 @@ func TestCorrectnessWithComplexGraphs(t *testing.T) {
 			}
 		}
 	})
+}
+
+func BenchmarkBFS(b *testing.B) {
+	graph := buildLargeLinearGraph(2000)
+	queries := []int{0, 10, 20, 50, 100, 200, 500, 1000}
+	numWorkers := 4
+
+	for b.Loop() {
+		var visited int
+		results := ConcurrentBFSQueries(graph, queries, numWorkers)
+		for _, v := range results {
+			visited += len(v)
+		}
+		b.ReportMetric(float64(visited), "visited")
+	}
 }

@@ -34,12 +34,24 @@ func ConcurrentBFSQueries(graph map[int][]int, queries []int, numWorkers int) ma
 
 	for range numWorkers {
 		wg.Go(func() {
+			// Test2
+			var (
+				seen    map[int]struct{}
+				pending []int
+				result  []int
+			)
+
 			for q := range queriesCh {
-				var (
-					seen    = map[int]struct{}{q: {}}
-					pending = []int{q}
-					result  = []int{q}
-				)
+				// Test1
+				// var (
+				// 	seen    = map[int]struct{}{q: {}}
+				// 	pending = []int{q}
+				// 	result  = []int{q}
+				// )
+				// Test2
+				seen = map[int]struct{}{q: {}}
+				pending = []int{q}
+				result = []int{q}
 
 				for len(pending) > 0 {
 					node := pending[0]
