@@ -55,7 +55,7 @@ func (c *Cache) Get(ctx context.Context, address string) (string, error) {
 	if _, ok := c.flight[address]; !ok {
 		c.flight[address] = struct{}{}
 		c.wg.Go(func() {
-			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
 			defer cancel()
 			val, err := c.client.Get(ctx, address)
 			c.mu.Lock()
