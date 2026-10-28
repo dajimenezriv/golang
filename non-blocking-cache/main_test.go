@@ -57,6 +57,30 @@ func (m *mockClient) collect() getResults {
 	}
 }
 
+func assertNotReady(t *testing.T, c *Cache, ctx context.Context) {
+	t.Helper()
+	_, err := c.Get(ctx, "address")
+	if !errors.Is(err, ErrNotReady) {
+		t.Errorf("Get() = %v, want %v", err, ErrNotReady)
+	}
+}
+
+func assertFetched(t *testing.T, c *Cache, m *mockClient, wantV string, wantErr error) {
+	t.Helper()
+	time.Sleep(time.Second)
+	synctest.Wait()
+	v, err := c.Get(t.Context(), "address")
+	if !errors.Is(err, wantErr) {
+		t.Errorf("Get() = %v, want %v", err, wantErr)
+	}
+	got := m.collect()
+	got.v = v
+	want := getResults{v: wantV, calls: 1, done: 1, canceled: 0, elapsed: time.Second}
+	if got != want {
+		t.Fatalf("Get():\n got  = %+v\n want = %+v", got, want)
+	}
+}
+
 func TestGetRunsJustOneFetch(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		m := newMockClient()
@@ -64,27 +88,10 @@ func TestGetRunsJustOneFetch(t *testing.T) {
 		t.Cleanup(c.Close)
 
 		for range 100 {
-			go func() {
-				_, err := c.Get(t.Context(), "address")
-				if !errors.Is(err, ErrNotReady) {
-					t.Errorf("Get() = %v, want %v", err, ErrNotReady)
-				}
-			}()
+			go assertNotReady(t, c, t.Context())
 		}
 
-		time.Sleep(time.Second)
-		synctest.Wait()
-		v, err := c.Get(t.Context(), "address")
-		if err != nil {
-			t.Errorf("Get() = %v, want nil", err)
-		}
-		if v != "address" {
-			t.Errorf("Get() = %q, want address", v)
-		}
-		want := getResults{calls: 1, done: 1, canceled: 0, elapsed: time.Second}
-		if got := m.collect(); got != want {
-			t.Fatalf("Get():\n got  = %+v\n want = %+v", got, want)
-		}
+		assertFetched(t, c, m, "address", nil)
 	})
 }
 
@@ -97,24 +104,8 @@ func TestGetFetchIgnoresContextCanceled(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
-		_, err := c.Get(ctx, "address")
-		if !errors.Is(err, ErrNotReady) {
-			t.Errorf("Get() = %v, want %v", err, ErrNotReady)
-		}
-
-		time.Sleep(time.Second)
-		synctest.Wait()
-		v, err := c.Get(t.Context(), "address")
-		if err != nil {
-			t.Errorf("Get() = %v, want nil", err)
-		}
-		if v != "address" {
-			t.Errorf("Get() = %q, want address", v)
-		}
-		want := getResults{calls: 1, done: 1, canceled: 0, elapsed: time.Second}
-		if got := m.collect(); got != want {
-			t.Fatalf("Get():\n got  = %+v\n want = %+v", got, want)
-		}
+		assertNotReady(t, c, ctx)
+		assertFetched(t, c, m, "address", nil)
 	})
 }
 
@@ -128,20 +119,7 @@ func TestGetStoresError(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
-		_, err := c.Get(ctx, "address")
-		if !errors.Is(err, ErrNotReady) {
-			t.Errorf("Get() = %v, want %v", err, ErrNotReady)
-		}
-
-		time.Sleep(time.Second)
-		synctest.Wait()
-		_, err = c.Get(t.Context(), "address")
-		if !errors.Is(err, errBoom) {
-			t.Errorf("Get() = %v, want %v", err, errBoom)
-		}
-		want := getResults{calls: 1, done: 1, canceled: 0, elapsed: time.Second}
-		if got := m.collect(); got != want {
-			t.Fatalf("Get():\n got  = %+v\n want = %+v", got, want)
-		}
+		assertNotReady(t, c, ctx)
+		assertFetched(t, c, m, "", errBoom)
 	})
 }
