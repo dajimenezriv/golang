@@ -25,7 +25,6 @@ type Client struct {
 func (c *Client) Send(message string) {
 	select {
 	case c.messages <- message:
-	case <-c.ctx.Done():
 	default: // buffer full: drop the message
 	}
 }
