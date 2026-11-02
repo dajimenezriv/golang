@@ -6,22 +6,12 @@ import (
 	"sync"
 )
 
-type ConnectionStatus int
-
-const (
-	Connected ConnectionStatus = iota
-	Disconnected
-)
-
 // Client represents a connected chat client
 type Client struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	messages chan string
-
-	mu       sync.Mutex
 	username string
-	status   ConnectionStatus
 }
 
 // Send sends a message to the client
@@ -70,7 +60,6 @@ func (s *ChatServer) Connect(username string) (*Client, error) {
 		cancel:   cancel,
 		messages: make(chan string),
 		username: username,
-		status:   Connected,
 	}
 	s.clients[username] = c
 	return c, nil
@@ -78,40 +67,40 @@ func (s *ChatServer) Connect(username string) (*Client, error) {
 
 // Disconnect removes a client from the chat server
 func (s *ChatServer) Disconnect(client *Client) {
-	client.mu.Lock()
-	defer client.mu.Unlock()
 	client.cancel()
-	client.status = Disconnected
-	delete(s.clients, client.username)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.clients[client.username] == client {
+		delete(s.clients, client.username)
+	}
 }
 
 // Broadcast sends a message to all connected clients
 func (s *ChatServer) Broadcast(sender *Client, message string) {
-	sender.mu.Lock()
-	defer sender.mu.Unlock()
-	if sender.status == Disconnected {
+	if sender.ctx.Err() != nil {
 		return
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, c := range s.clients {
-		c.Send(message)
+		if c.username != sender.username {
+			go c.Send(message)
+		}
 	}
 }
 
 // PrivateMessage sends a message to a specific client
 func (s *ChatServer) PrivateMessage(sender *Client, recipient string, message string) error {
-	sender.mu.Lock()
-	defer sender.mu.Unlock()
-	if sender.status == Disconnected {
+	if sender.ctx.Err() != nil {
 		return ErrClientDisconnected
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if c, ok := s.clients[recipient]; ok {
-		c.Send(message)
+		go c.Send(message)
 		return nil
 	}
 	return ErrRecipientNotFound
