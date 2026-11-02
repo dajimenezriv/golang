@@ -1,8 +1,8 @@
 package main
 
 import (
-	"context"
 	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -15,28 +15,53 @@ var (
 
 // Client represents a connected chat client
 type Client struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	messages chan string
 	username string
+	messages chan string
+
+	done     chan struct{} // closed on disconnect
+	doneOnce sync.Once
 }
 
-// Send sends a message to the client
+// Send sends a message to the client, dropping it if the buffer is full
 func (c *Client) Send(message string) {
+	if c.isDisconnected() {
+		return
+	}
+
 	select {
 	case c.messages <- message:
-	default: // buffer full: drop the message
+	default:
 	}
 }
 
-// Receive returns the next message for the client (blocking)
+// Receive returns the next message for the client (blocking).
+// After a disconnect it drains queued messages, then returns "".
 func (c *Client) Receive() string {
 	select {
 	case m := <-c.messages:
 		return m
-	case <-c.ctx.Done():
+	case <-c.done:
+	}
+
+	select {
+	case m := <-c.messages:
+		return m
+	default:
 		return ""
 	}
+}
+
+func (c *Client) isDisconnected() bool {
+	select {
+	case <-c.done:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Client) disconnect() {
+	c.doneOnce.Do(func() { close(c.done) })
 }
 
 // ChatServer manages client connections and message routing
@@ -61,12 +86,10 @@ func (s *ChatServer) Connect(username string) (*Client, error) {
 		return nil, ErrUsernameAlreadyTaken
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
 	c := &Client{
-		ctx:      ctx,
-		cancel:   cancel,
-		messages: make(chan string, 1024),
 		username: username,
+		messages: make(chan string, 1024),
+		done:     make(chan struct{}),
 	}
 	s.clients[username] = c
 	return c, nil
@@ -74,7 +97,7 @@ func (s *ChatServer) Connect(username string) (*Client, error) {
 
 // Disconnect removes a client from the chat server
 func (s *ChatServer) Disconnect(client *Client) {
-	client.cancel()
+	client.disconnect()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -83,31 +106,33 @@ func (s *ChatServer) Disconnect(client *Client) {
 	}
 }
 
-// Broadcast sends a message to all connected clients
+// Broadcast sends a message to all connected clients, including the sender
 func (s *ChatServer) Broadcast(sender *Client, message string) {
-	if sender.ctx.Err() != nil {
+	if sender.isDisconnected() {
 		return
 	}
+
+	formatted := fmt.Sprintf("%s: %s", sender.username, message)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, c := range s.clients {
-		if c != sender {
-			c.Send(message)
-		}
+		c.Send(formatted)
 	}
 }
 
-// PrivateMessage sends a message to a specific client
+// PrivateMessage sends a message to a specific client. A nil error means the
+// message was accepted, not delivered: it is dropped if the recipient's buffer
+// is full, and may never be read.
 func (s *ChatServer) PrivateMessage(sender *Client, recipient string, message string) error {
-	if sender.ctx.Err() != nil {
+	if sender.isDisconnected() {
 		return ErrClientDisconnected
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if c, ok := s.clients[recipient]; ok {
-		c.Send(message)
+		c.Send(fmt.Sprintf("%s: %s", sender.username, message))
 		return nil
 	}
 	return ErrRecipientNotFound
