@@ -6,6 +6,13 @@ import (
 	"sync"
 )
 
+// Common errors that can be returned by the Chat Server
+var (
+	ErrUsernameAlreadyTaken = errors.New("username already taken")
+	ErrRecipientNotFound    = errors.New("recipient not found")
+	ErrClientDisconnected   = errors.New("client disconnected")
+)
+
 // Client represents a connected chat client
 type Client struct {
 	ctx      context.Context
@@ -19,6 +26,7 @@ func (c *Client) Send(message string) {
 	select {
 	case c.messages <- message:
 	case <-c.ctx.Done():
+	default: // buffer full: drop the message
 	}
 }
 
@@ -58,7 +66,7 @@ func (s *ChatServer) Connect(username string) (*Client, error) {
 	c := &Client{
 		ctx:      ctx,
 		cancel:   cancel,
-		messages: make(chan string),
+		messages: make(chan string, 1024),
 		username: username,
 	}
 	s.clients[username] = c
@@ -85,8 +93,8 @@ func (s *ChatServer) Broadcast(sender *Client, message string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, c := range s.clients {
-		if c.username != sender.username {
-			go c.Send(message)
+		if c != sender {
+			c.Send(message)
 		}
 	}
 }
@@ -100,16 +108,8 @@ func (s *ChatServer) PrivateMessage(sender *Client, recipient string, message st
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if c, ok := s.clients[recipient]; ok {
-		go c.Send(message)
+		c.Send(message)
 		return nil
 	}
 	return ErrRecipientNotFound
 }
-
-// Common errors that can be returned by the Chat Server
-var (
-	ErrUsernameAlreadyTaken = errors.New("username already taken")
-	ErrRecipientNotFound    = errors.New("recipient not found")
-	ErrClientDisconnected   = errors.New("client disconnected")
-	// Add more error types as needed
-)
