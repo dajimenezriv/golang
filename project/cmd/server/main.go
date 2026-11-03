@@ -1,9 +1,9 @@
 package main
 
 import (
-	"golang/project/internal/web"
 	"log"
 	"net/http"
+	"project/internal/web"
 
 	"github.com/go-chi/chi/v5"
 )
