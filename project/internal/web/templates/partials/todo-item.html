@@ -1,0 +1,12 @@
+{{define "todo_item"}}
+<li id="todo-{{.ID}}">
+  {{.Title}}
+  <button
+    hx-delete="/todos/{{.ID}}"
+    hx-target="#todo-{{.ID}}"
+    hx-swap="outerHTML"
+  >
+    ✕
+  </button>
+</li>
+{{end}}
